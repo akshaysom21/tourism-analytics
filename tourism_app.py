@@ -46,20 +46,40 @@ def extract_file_id(link):
     return match.group(1) if match else link
 
 def download_from_gdrive(link, dest_path, label):
+    """Download from Google Drive, handling both old and new confirmation flows."""
     if os.path.exists(dest_path):
-        return
+        os.remove(dest_path)  # remove any previously broken download
     file_id = extract_file_id(link)
-    with st.spinner(f"Downloading {label} on first launch..."):
+    with st.spinner(f"Downloading {label} (first launch only - please wait)..."):
         session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0"})
         url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        response = session.get(url, stream=True)
+        response = session.get(url, stream=True, timeout=60)
+        # Old-style cookie token
         token = next((v for k, v in response.cookies.items() if k.startswith("download_warning")), None)
         if token:
-            response = session.get(url, params={"confirm": token}, stream=True)
+            response = session.get(url, params={"confirm": token}, stream=True, timeout=120)
+        # New-style HTML confirmation page - use usercontent endpoint instead
+        if "text/html" in response.headers.get("Content-Type", ""):
+            url2 = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+            response = session.get(url2, stream=True, timeout=120)
         with open(dest_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=32768):
+            for chunk in response.iter_content(chunk_size=65536):
                 if chunk:
                     f.write(chunk)
+    # Verify the file is not an HTML error page
+    with open(dest_path, "rb") as f:
+        header = f.read(10)
+    if header[:4] in (b"<htm", b"<!DO"):
+        os.remove(dest_path)
+        st.error(
+            f"**Failed to download `{label}` from Google Drive.**\n\n"
+            "Google is blocking the download. Please:\n"
+            "1. Open the file in Google Drive\n"
+            "2. Click Share → set to **Anyone with the link**\n"
+            "3. Copy the new link and update it in the app"
+        )
+        st.stop()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Load models / data
