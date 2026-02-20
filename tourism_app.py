@@ -13,7 +13,8 @@ import pandas as pd
 import numpy as np
 import pickle
 import os
-import gdown
+import re
+import requests
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("Agg")
@@ -31,36 +32,48 @@ st.set_page_config(
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 👇 PASTE YOUR GOOGLE DRIVE FILE IDs BELOW (only these 2 lines need editing)
-#
-# How to get your File ID:
-#   1. Upload the file to Google Drive
-#   2. Right-click → Share → set to "Anyone with the link"
-#   3. Right-click → Get link → it looks like:
-#      https://drive.google.com/file/d/YOUR_FILE_ID_HERE/view
-#   4. Copy only the FILE_ID part and paste it below
+# 👇 PASTE YOUR GOOGLE DRIVE SHARE LINKS BELOW (paste the full link)
+# How: Right-click file in Drive → Share → "Anyone with the link" → Copy link
 # ──────────────────────────────────────────────────────────────────────────────
-GDRIVE_MODEL_ID = "https://drive.google.com/file/d/1c8b2k_xhHOEhzR25KOYkKKfP59b1UivO/view?usp=drive_link"      # ← tourism_models.pkl
-GDRIVE_DATA_ID  = "https://drive.google.com/file/d/1wK50R_0RKFcZBX7AWkNzGK5_VTB4_Drf/view?usp=drive_link"       # ← preprocessed_tourism_data.csv
+GDRIVE_MODEL_LINK = "https://drive.google.com/file/d/1c8b2k_xhHOEhzR25KOYkKKfP59b1UivO/view?usp=sharing"
+GDRIVE_DATA_LINK  = "https://drive.google.com/file/d/1wK50R_0RKFcZBX7AWkNzGK5_VTB4_Drf/view?usp=sharing"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Load models / data  (auto-downloads from Google Drive if not present locally)
+# Robust Google Drive downloader (handles large files & confirmation pages)
 # ──────────────────────────────────────────────────────────────────────────────
-def download_if_missing(file_id, dest_path, label):
-    if not os.path.exists(dest_path):
-        with st.spinner(f"⬇️ Downloading {label} from Google Drive (first launch only)..."):
-            gdown.download(f"https://drive.google.com/uc?id={file_id}", dest_path, quiet=False)
+def extract_file_id(link):
+    match = re.search(r"/d/([a-zA-Z0-9_-]{20,})", link)
+    return match.group(1) if match else link
 
+def download_from_gdrive(link, dest_path, label):
+    if os.path.exists(dest_path):
+        return
+    file_id = extract_file_id(link)
+    with st.spinner(f"Downloading {label} on first launch..."):
+        session = requests.Session()
+        url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        response = session.get(url, stream=True)
+        token = next((v for k, v in response.cookies.items() if k.startswith("download_warning")), None)
+        if token:
+            response = session.get(url, params={"confirm": token}, stream=True)
+        with open(dest_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=32768):
+                if chunk:
+                    f.write(chunk)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Load models / data
+# ──────────────────────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_models():
-    download_if_missing(GDRIVE_MODEL_ID, "tourism_models.pkl", "tourism_models.pkl")
+    download_from_gdrive(GDRIVE_MODEL_LINK, "tourism_models.pkl", "tourism_models.pkl")
     with open("tourism_models.pkl", "rb") as f:
         pkg = pickle.load(f)
     return pkg
 
 @st.cache_data
 def load_data():
-    download_if_missing(GDRIVE_DATA_ID, "preprocessed_tourism_data.csv", "preprocessed_tourism_data.csv")
+    download_from_gdrive(GDRIVE_DATA_LINK, "preprocessed_tourism_data.csv", "preprocessed_tourism_data.csv")
     return pd.read_csv("preprocessed_tourism_data.csv")
 
 # ──────────────────────────────────────────────────────────────────────────────
